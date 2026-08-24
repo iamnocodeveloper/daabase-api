@@ -17,13 +17,21 @@ if [ ! -s "$PGDATA/PG_VERSION" ]; then
   echo "initdb inicial..."
   chown -R postgres:postgres /data
   su postgres -c "$PGBIN/initdb -D $PGDATA -E UTF8 --auth-local=trust --auth-host=scram-sha-256"
-  cat >> "$PGDATA/postgresql.conf" <<CONF
-wal_level = logical
-max_replication_slots = 10
-max_wal_senders = 10
-listen_addresses = '127.0.0.1'
-CONF
 fi
+
+# Config idempotente: garantiza las claves en cada arranque
+CONF="$PGDATA/postgresql.conf"
+touch "$CONF"
+ensure_conf() {
+  if ! grep -qE "^$1\s*=" "$CONF"; then
+    echo "$1 = '$2'" >> "$CONF"
+  fi
+}
+ensure_conf "listen_addresses" "127.0.0.1"
+ensure_conf "wal_level" "logical"
+ensure_conf "max_replication_slots" "10"
+ensure_conf "max_wal_senders" "10"
+ensure_conf "output_plugin_libraries" "wal2json"
 
 chown -R postgres:postgres /data/pg
 
