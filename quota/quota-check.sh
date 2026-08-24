@@ -59,7 +59,7 @@ fi
 # the manual `bootstrap_triples_size` REPL operation and runs every check:
 # it only seeds attrs that are in neither the aggregate nor the pending
 # updates buffer, so it can never double-count.
-SEED_COUNT=$(su postgres -c "psql -tA -d instant" <<'SQL' 2>&1 || true
+SEED_OUT=$(su postgres -c "psql -tA -d instant" <<'SQL' 2>&1 || true
 INSERT INTO triples_size_updates (app_id, attr_id, pg_size, files_size)
 SELECT
   t.app_id,
@@ -75,11 +75,13 @@ WHERE agg.app_id IS NULL
     SELECT 1 FROM triples_size_updates u
     WHERE u.app_id = t.app_id AND u.attr_id = t.attr_id
   )
-GROUP BY t.app_id, t.attr_id;
+GROUP BY t.app_id, t.attr_id
+RETURNING 1;
 SQL
 )
-SEED_COUNT=$(echo "$SEED_COUNT" | tr -d '[:space:]')
-[ -n "$SEED_COUNT" ] && [ "$SEED_COUNT" != "INSERT" ] && echo "[$ts] [QUOTA-BOOTSTRAP] seeded $SEED_COUNT rows for pre-existing triples"
+SEED_N=$(echo "$SEED_OUT" | grep -c '^1$' || true)
+SEED_N=${SEED_N:-0}
+[ "$SEED_N" -gt 0 ] && echo "[$ts] [QUOTA-BOOTSTRAP] seeded $SEED_N attrs for pre-existing triples"
 
 # ── Diagnostic counts (every check) ──────────────────────────────────
 DIAG=$(su postgres -c "psql -tA -d instant -c \"SELECT (SELECT count(*) FROM triples) || ':' || (SELECT count(*) FROM triples_size_updates) || ':' || (SELECT count(*) FROM triples_size_aggregate)\"")
