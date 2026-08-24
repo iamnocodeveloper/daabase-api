@@ -6,16 +6,12 @@
 #
 # Logs to stdout (captured by entrypoint → /data/logs/quota.log)
 
-set -euo pipefail
-
 PLAN_FILE="${PLAN_FILE:-/data/plans.yaml}"
-PGBIN=/usr/lib/postgresql/17/bin
 
-# ── Parse plans.yaml (no jq/python needed) ──────────────────────────
+# ── Parse plans.yaml (no jq/python/bc needed) ──────────────────────
 
 get_limit() {
   local plan="$1"
-  # Extract max_bytes for a given plan name
   awk -v p="$plan" '
     $0 ~ "^  " p ":" { found=1; next }
     found && /max_bytes:/ { print $2; exit }
@@ -34,13 +30,13 @@ get_warn_pct() {
 
 DEFAULT_PLAN=$(awk '/^default:/ { print $2 }' "$PLAN_FILE")
 
-# ── Human-readable size ─────────────────────────────────────────────
+# ── Human-readable size (pure bash, no bc) ──────────────────────────
 
 human_bytes() {
-  local b=$1
-  if   [ "$b" -ge 1073741824 ]; then echo "$(echo "scale=1; $b/1073741824" | bc)GB"
-  elif [ "$b" -ge 1048576 ];    then echo "$(echo "scale=0; $b/1048576" | bc)MB"
-  elif [ "$b" -ge 1024 ];       then echo "$(echo "scale=0; $b/1024" | bc)KB"
+  local b=${1%%.*}
+  if   [ "$b" -ge 1073741824 ]; then echo "$(( b / 1073741824 ))GB"
+  elif [ "$b" -ge 1048576 ];    then echo "$(( b / 1048576 ))MB"
+  elif [ "$b" -ge 1024 ];       then echo "$(( b / 1024 ))KB"
   else                                echo "${b}B"
   fi
 }
@@ -49,13 +45,19 @@ human_bytes() {
 
 ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
+# Verify plan file exists
+if [ ! -f "$PLAN_FILE" ]; then
+  echo "[$ts] [QUOTA-ERROR] plan file not found: $PLAN_FILE"
+  exit 1
+fi
+
 # Fetch all non-disabled apps with their sizes
 APP_DATA=$(su postgres -c "psql -tA -d instant" <<'SQL'
   SELECT
     a.id::text,
     COALESCE(a.name, 'unnamed'),
     COALESCE(a.subscription_type_id, 'free'),
-    a.status,
+    COALESCE(a.status, 'active'),
     COALESCE(agg.total_bytes, 0)
   FROM apps a
   LEFT JOIN (
@@ -67,12 +69,14 @@ APP_DATA=$(su postgres -c "psql -tA -d instant" <<'SQL'
     WHERE at.deletion_marked_at IS NULL
     GROUP BY app_id
   ) agg ON a.id = agg.app_id
-  WHERE a.status != 'disabled'
-    AND a.status IS NOT NULL;
+  WHERE COALESCE(a.status, 'active') != 'disabled';
 SQL
 )
 
-[ -z "$APP_DATA" ] && { echo "[$ts] [QUOTA-CHECK] no apps found"; exit 0; }
+if [ -z "$APP_DATA" ]; then
+  echo "[$ts] [QUOTA-CHECK] no active apps found"
+  exit 0
+fi
 
 while IFS='|' read -r app_id app_name plan current_status total_bytes; do
   # Strip whitespace
@@ -83,6 +87,11 @@ while IFS='|' read -r app_id app_name plan current_status total_bytes; do
   total_bytes=${total_bytes:-0}
   total_bytes=$(echo "$total_bytes" | xargs)
 
+  # Skip if total_bytes is not a number
+  case "$total_bytes" in
+    ''|*[!0-9]*) echo "[$ts] [QUOTA-WARN] app=$app_name invalid total_bytes=$total_bytes, skipping"; continue ;;
+  esac
+
   # Get limit for this plan (fallback to default)
   max_bytes=$(get_limit "$plan")
   [ -z "$max_bytes" ] && max_bytes=$(get_limit "$DEFAULT_PLAN")
@@ -92,32 +101,30 @@ while IFS='|' read -r app_id app_name plan current_status total_bytes; do
   [ -z "$warn_pct" ] && warn_pct=80
   warn_bytes=$(( max_bytes * warn_pct / 100 ))
 
-  total_mb=$(human_bytes "$total_bytes")
-  max_mb=$(human_bytes "$max_bytes")
+  total_h=$(human_bytes "$total_bytes")
+  max_h=$(human_bytes "$max_bytes")
 
   if [ "$total_bytes" -gt "$max_bytes" ]; then
     # OVER LIMIT
     if [ "$current_status" = "active" ]; then
-      su postgres -c "psql -d instant -c \"UPDATE apps SET status = 'read-only' WHERE id = '$app_id'::uuid;\""
-      echo "[$ts] [QUOTA-EXCEEDED] app=$app_name($app_id) plan=$plan total=${total_mb}/${max_mb} -> read-only"
+      su postgres -c "psql -d instant -c \"UPDATE apps SET status = 'read-only' WHERE id = '$app_id'::uuid;\"" >/dev/null 2>&1
+      echo "[$ts] [QUOTA-EXCEEDED] app=$app_name($app_id) plan=$plan total=${total_h}/${max_h} -> read-only"
     else
-      echo "[$ts] [QUOTA-CHECK] app=$app_name($app_id) plan=$plan total=${total_mb}/${max_mb} status=$current_status (already enforced)"
+      echo "[$ts] [QUOTA-CHECK] app=$app_name($app_id) plan=$plan total=${total_h}/${max_h} status=$current_status (already enforced)"
     fi
 
   elif [ "$total_bytes" -gt "$warn_bytes" ]; then
     # WARNING ZONE (80-100%)
     if [ "$current_status" = "active" ]; then
       pct=$(( total_bytes * 100 / max_bytes ))
-      echo "[$ts] [QUOTA-WARN] app=$app_name($app_id) plan=$plan total=${total_mb}/${max_mb} (${pct}%)"
+      echo "[$ts] [QUOTA-WARN] app=$app_name($app_id) plan=$plan total=${total_h}/${max_h} (${pct}%)"
     fi
-    # If already read-only but now under limit... check below
-
   fi
 
   # AUTO-RESTORE: if under limit and currently read-only, reactivate
   if [ "$total_bytes" -le "$max_bytes" ] && [ "$current_status" = "read-only" ]; then
-    su postgres -c "psql -d instant -c \"UPDATE apps SET status = 'active' WHERE id = '$app_id'::uuid;\""
-    echo "[$ts] [QUOTA-RESTORED] app=$app_name($app_id) plan=$plan total=${total_mb}/${max_mb} -> active"
+    su postgres -c "psql -d instant -c \"UPDATE apps SET status = 'active' WHERE id = '$app_id'::uuid;\"" >/dev/null 2>&1
+    echo "[$ts] [QUOTA-RESTORED] app=$app_name($app_id) plan=$plan total=${total_h}/${max_h} -> active"
   fi
 
 done <<< "$APP_DATA"
