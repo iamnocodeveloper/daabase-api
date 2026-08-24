@@ -5,10 +5,18 @@ FROM ghcr.io/instantdb/server:latest AS instant
 
 FROM debian:bookworm-slim
 
-# JVM Corretto 26 desde la imagen oficial del servidor
+# JVM Corretto 26 desde la imagen oficial del servidor — detección automática del binario
 COPY --from=instant /usr/lib/jvm /usr/lib/jvm
-ENV JAVA_HOME=/usr/lib/jvm/java-26-amazon-corretto
-ENV PATH="${JAVA_HOME}/bin:${PATH}"
+RUN set -eux; \
+    JB="$(find /usr/lib/jvm -type f -name java -executable | head -n1)"; \
+    test -n "$JB"; \
+    JB_BIN="$(dirname "$JB")"; \
+    for c in java keytool jar javac jcmd jstack; do \
+      [ -f "$JB_BIN/$c" ] && ln -sf "$JB_BIN/$c" "/usr/local/bin/$c" || true; \
+    done; \
+    JAVA_HOME_REAL="$(dirname "$JB_BIN")"; \
+    ln -sfn "$JAVA_HOME_REAL" /usr/lib/jvm/detected; \
+    java -version
 
 # Motor completo: jar, migraciones, resources y start.sh oficial (bootstrap OSS incluido)
 COPY --from=instant /app /app

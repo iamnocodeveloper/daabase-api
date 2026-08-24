@@ -26,7 +26,13 @@ CONF
 fi
 
 chown -R postgres:postgres /data/pg
-su postgres -c "$PGBIN/pg_ctl -D $PGDATA -l /data/pg.log start -w"
+
+if su postgres -c "$PGBIN/pg_ctl -D $PGDATA status" >/dev/null 2>&1; then
+  echo "Postgres ya estaba corriendo"
+else
+  rm -f "$PGDATA/postmaster.pid"
+  su postgres -c "$PGBIN/pg_ctl -D $PGDATA -l /data/pg.log start -w"
+fi
 
 su postgres -c "psql -qAt -c \"ALTER USER postgres PASSWORD '$PG_PASSWORD';\""
 su postgres -c "psql -qAt -c \"SELECT 1 FROM pg_database WHERE datname='instant'\"" | grep -q 1 || \
