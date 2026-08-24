@@ -6,7 +6,9 @@
 #
 # Logs to stdout (captured by entrypoint → /data/logs/quota.log)
 
-PLAN_FILE="${PLAN_FILE:-/app/quota/plans.yaml}"
+# Read /data/plans.yaml (persistent, user-editable). The entrypoint copies
+# /app/quota/plans.yaml -> /data/plans.yaml on first boot so defaults exist.
+PLAN_FILE="${PLAN_FILE:-/data/plans.yaml}"
 
 # ── Parse plans.yaml (no jq/python/bc needed) ──────────────────────
 
