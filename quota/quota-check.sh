@@ -53,21 +53,51 @@ if [ ! -f "$PLAN_FILE" ]; then
   exit 1
 fi
 
+# ── One-time bootstrap: seed sizes for pre-existing triples ──────────
+# The engine's size collection only tracks writes AFTER the triggers
+# (migration 114). Historical triples never got size rows. This mirrors
+# the manual `bootstrap_triples_size` REPL operation. Runs only when both
+# the updates buffer and the aggregate are empty.
+NEEDS_SEED=$(su postgres -c "psql -tA -d instant -c \"SELECT EXISTS(SELECT 1 FROM triples) AND NOT EXISTS(SELECT 1 FROM triples_size_updates) AND NOT EXISTS(SELECT 1 FROM triples_size_aggregate)\"")
+if [ "$NEEDS_SEED" = "t" ]; then
+  echo "[$ts] [QUOTA-BOOTSTRAP] seeding initial sizes for existing triples..."
+  su postgres -c "psql -d instant" <<'SQL' >/dev/null 2>&1 || true
+INSERT INTO triples_size_updates (app_id, attr_id, pg_size, files_size)
+SELECT
+  t.app_id,
+  t.attr_id,
+  SUM(pg_column_size(t.*))::bigint,
+  CASE WHEN t.attr_id = '96653230-13ff-ffff-2a35-24609fffffff'
+       THEN SUM(triples_extract_number_value(t.value))::bigint ELSE 0 END
+FROM triples t
+GROUP BY t.app_id, t.attr_id;
+SQL
+  echo "[$ts] [QUOTA-BOOTSTRAP] seed complete — will aggregate on next collect cycle"
+fi
+
+# ── Overhead factor (mirrors engine app-usage) ──────────────────────
+# sum(pg_size) * (pg_total_relation_size('triples') / pg_relation_size('triples'))
+# Accounts for indexes/TOAST overhead so quota matches the dashboard.
+OVERHEAD=$(su postgres -c "psql -tA -d instant -c \"SELECT CASE WHEN pg_relation_size('triples') = 0 THEN 1 ELSE pg_total_relation_size('triples')::numeric / pg_relation_size('triples') END\"")
+OVERHEAD=$(echo "$OVERHEAD" | xargs)
+[ -z "$OVERHEAD" ] && OVERHEAD=1
+
 # Fetch all non-disabled apps with their sizes
-APP_DATA=$(su postgres -c "psql -tA -d instant" <<'SQL'
+APP_DATA=$(su postgres -c "psql -tA -d instant -v overhead=$OVERHEAD" <<'SQL'
   SELECT
     a.id::text,
     COALESCE(a.title, 'unnamed'),
     COALESCE(st.name, 'free'),
     COALESCE(a.status, 'active'),
-    COALESCE(agg.total_bytes, 0)
+    COALESCE((ROUND(COALESCE(agg.pg_bytes, 0) * :overhead) + COALESCE(agg.files_bytes, 0))::bigint, 0)
   FROM apps a
   LEFT JOIN instant_subscriptions sub ON a.subscription_id = sub.id
   LEFT JOIN instant_subscription_types st ON sub.subscription_type_id = st.id
   LEFT JOIN (
     SELECT
       ag.app_id,
-      SUM(ag.pg_size) + SUM(COALESCE(ag.files_size, 0)) as total_bytes
+      SUM(ag.pg_size) as pg_bytes,
+      SUM(COALESCE(ag.files_size, 0)) as files_bytes
     FROM triples_size_aggregate ag
     JOIN attrs at ON ag.attr_id = at.id
     WHERE at.deletion_marked_at IS NULL
