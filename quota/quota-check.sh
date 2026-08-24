@@ -6,7 +6,7 @@
 #
 # Logs to stdout (captured by entrypoint → /data/logs/quota.log)
 
-PLAN_FILE="${PLAN_FILE:-/data/plans.yaml}"
+PLAN_FILE="${PLAN_FILE:-/app/quota/plans.yaml}"
 
 # ── Parse plans.yaml (no jq/python/bc needed) ──────────────────────
 

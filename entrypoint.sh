@@ -82,6 +82,7 @@ mc mb --ignore-existing "local/daabase-backups"
 ) &
 
 # ---- Quota enforcement: chequeo cada 5 min, toggle active/read-only ----
+[ -f /app/quota/plans.yaml ] && [ ! -f /data/plans.yaml ] && cp /app/quota/plans.yaml /data/plans.yaml
 (
   sleep 300  # esperar 5 min a que el motor llene triples_size_aggregate
   mkdir -p /data/logs
