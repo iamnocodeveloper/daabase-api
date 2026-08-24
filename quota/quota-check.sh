@@ -53,15 +53,13 @@ if [ ! -f "$PLAN_FILE" ]; then
   exit 1
 fi
 
-# ── One-time bootstrap: seed sizes for pre-existing triples ──────────
+# ── Seed sizes for pre-existing triples (idempotent) ─────────────────
 # The engine's size collection only tracks writes AFTER the triggers
 # (migration 114). Historical triples never got size rows. This mirrors
-# the manual `bootstrap_triples_size` REPL operation. Runs only when both
-# the updates buffer and the aggregate are empty.
-NEEDS_SEED=$(su postgres -c "psql -tA -d instant -c \"SELECT EXISTS(SELECT 1 FROM triples) AND NOT EXISTS(SELECT 1 FROM triples_size_updates) AND NOT EXISTS(SELECT 1 FROM triples_size_aggregate)\"")
-if [ "$NEEDS_SEED" = "t" ]; then
-  echo "[$ts] [QUOTA-BOOTSTRAP] seeding initial sizes for existing triples..."
-  su postgres -c "psql -d instant" <<'SQL' >/dev/null 2>&1 || true
+# the manual `bootstrap_triples_size` REPL operation and runs every check:
+# it only seeds attrs that are in neither the aggregate nor the pending
+# updates buffer, so it can never double-count.
+SEED_COUNT=$(su postgres -c "psql -tA -d instant" <<'SQL' 2>&1 || true
 INSERT INTO triples_size_updates (app_id, attr_id, pg_size, files_size)
 SELECT
   t.app_id,
@@ -70,10 +68,22 @@ SELECT
   CASE WHEN t.attr_id = '96653230-13ff-ffff-2a35-24609fffffff'
        THEN SUM(triples_extract_number_value(t.value))::bigint ELSE 0 END
 FROM triples t
+LEFT JOIN triples_size_aggregate agg
+  ON t.app_id = agg.app_id AND t.attr_id = agg.attr_id
+WHERE agg.app_id IS NULL
+  AND NOT EXISTS (
+    SELECT 1 FROM triples_size_updates u
+    WHERE u.app_id = t.app_id AND u.attr_id = t.attr_id
+  )
 GROUP BY t.app_id, t.attr_id;
 SQL
-  echo "[$ts] [QUOTA-BOOTSTRAP] seed complete — will aggregate on next collect cycle"
-fi
+)
+SEED_COUNT=$(echo "$SEED_COUNT" | tr -d '[:space:]')
+[ -n "$SEED_COUNT" ] && [ "$SEED_COUNT" != "INSERT" ] && echo "[$ts] [QUOTA-BOOTSTRAP] seeded $SEED_COUNT rows for pre-existing triples"
+
+# ── Diagnostic counts (every check) ──────────────────────────────────
+DIAG=$(su postgres -c "psql -tA -d instant -c \"SELECT (SELECT count(*) FROM triples) || ':' || (SELECT count(*) FROM triples_size_updates) || ':' || (SELECT count(*) FROM triples_size_aggregate)\"")
+echo "[$ts] [QUOTA-DIAG] triples:updates:aggregate = $DIAG"
 
 # ── Overhead factor (mirrors engine app-usage) ──────────────────────
 # sum(pg_size) * (pg_total_relation_size('triples') / pg_relation_size('triples'))
