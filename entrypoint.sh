@@ -11,6 +11,13 @@ set -euo pipefail
 PGDATA=/data/pg
 PGBIN=/usr/lib/postgresql/17/bin
 
+# ---- Reverse proxy (nginx): files.* -> MinIO :9000, resto -> motor :8888 ----
+# Primera instrucción: el puerto 8080 debe escuchar en <1s para que el health
+# check de la plataforma (que corre al arrancar el contenedor) no reporte "down".
+nginx -g 'daemon off;' &
+NGINX_PID=$!
+echo "nginx en :8080 (pid $NGINX_PID)"
+
 echo "== 1/5 PostgreSQL =="
 
 if [ ! -s "$PGDATA/PG_VERSION" ]; then
@@ -45,13 +52,6 @@ fi
 su postgres -c "psql -qAt -c \"ALTER USER postgres PASSWORD '$PG_PASSWORD';\""
 su postgres -c "psql -qAt -c \"SELECT 1 FROM pg_database WHERE datname='instant'\"" | grep -q 1 || \
   su postgres -c "psql -c 'CREATE DATABASE instant;'"
-
-# ---- Reverse proxy (nginx): files.* -> MinIO :9000, resto -> motor :8888 ----
-# Se arranca ANTES que MinIO/motor para que el puerto 8080 escuche desde el
-# primer segundo (health check de la plataforma en el deploy no da falso down).
-nginx -g 'daemon off;' &
-NGINX_PID=$!
-echo "nginx en :8080 (pid $NGINX_PID)"
 
 echo "== 2/5 MinIO =="
 
