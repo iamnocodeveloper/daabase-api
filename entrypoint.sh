@@ -106,6 +106,9 @@ export AWS_REGION="${AWS_REGION:-us-east-1}"
 export S3_ENDPOINT="http://127.0.0.1:9000"
 export S3_PUBLIC_ENDPOINT="${S3_PUBLIC_ENDPOINT:-}"
 export JAVA_OPTS="${JAVA_OPTS:--Xmx1500m}"
+# El motor lee PORT del entorno; la plataforma inyecta PORT=<puerto contenedor> (8080),
+# pero 8080 lo usa nginx. Forzamos el motor a 8888 (nginx enruta api.* -> 8888).
+export PORT=8888
 
 cd /app
 
