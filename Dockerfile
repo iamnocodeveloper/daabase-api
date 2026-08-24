@@ -39,8 +39,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY entrypoint.sh /entrypoint.sh
 COPY quota/ /app/quota/
+COPY restore-drill.sh /app/restore-drill.sh
 COPY nginx.conf /etc/nginx/nginx.conf
-RUN chmod +x /entrypoint.sh /app/quota/quota-check.sh \
+RUN chmod +x /entrypoint.sh /app/quota/quota-check.sh /app/restore-drill.sh \
     && mkdir -p /data/pg /data/minio /data/logs /var/log/nginx \
     && chown -R postgres:postgres /data/pg
 

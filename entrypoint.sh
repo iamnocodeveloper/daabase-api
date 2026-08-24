@@ -69,6 +69,10 @@ nginx -g 'daemon off;' &
 NGINX_PID=$!
 echo "nginx en :8080 (pid $NGINX_PID)"
 
+# ---- Restore drill: una vez por ciclo de contenedor (B1 / gate D2b) ----
+/app/restore-drill.sh &
+RESTORE_PID=$!
+
 # ---- Backups programados: pg_dump cada 6h + copia a bucket + retención 48h ----
 (
   sleep 90
