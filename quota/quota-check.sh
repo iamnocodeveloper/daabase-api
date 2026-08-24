@@ -55,11 +55,13 @@ fi
 APP_DATA=$(su postgres -c "psql -tA -d instant" <<'SQL'
   SELECT
     a.id::text,
-    COALESCE(a.name, 'unnamed'),
-    COALESCE(a.subscription_type_id, 'free'),
+    COALESCE(a.title, 'unnamed'),
+    COALESCE(st.name, 'free'),
     COALESCE(a.status, 'active'),
     COALESCE(agg.total_bytes, 0)
   FROM apps a
+  LEFT JOIN instant_subscriptions sub ON a.subscription_id = sub.id
+  LEFT JOIN instant_subscription_types st ON sub.subscription_type_id = st.id
   LEFT JOIN (
     SELECT
       ag.app_id,
@@ -82,7 +84,7 @@ while IFS='|' read -r app_id app_name plan current_status total_bytes; do
   # Strip whitespace
   app_id=$(echo "$app_id" | xargs)
   app_name=$(echo "$app_name" | xargs)
-  plan=$(echo "$plan" | xargs)
+  plan=$(echo "$plan" | xargs | tr '[:upper:]' '[:lower:]')
   current_status=$(echo "$current_status" | xargs)
   total_bytes=${total_bytes:-0}
   total_bytes=$(echo "$total_bytes" | xargs)
