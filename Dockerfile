@@ -28,7 +28,7 @@ COPY --from=minio/mc /usr/bin/mc /usr/bin/mc
 
 # Postgres 17 oficial (PGDG) con extensión lógica habilitada por config
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      ca-certificates curl gnupg supervisor procps \
+      ca-certificates curl gnupg supervisor procps nginx \
  && install -d /usr/share/postgresql-common/pgdg \
  && curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
       | gpg --dearmor -o /usr/share/postgresql-common/pgdg/apt.gpg \
@@ -39,10 +39,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY entrypoint.sh /entrypoint.sh
 COPY quota/ /app/quota/
+COPY nginx.conf /etc/nginx/nginx.conf
 RUN chmod +x /entrypoint.sh /app/quota/quota-check.sh \
-    && mkdir -p /data/pg /data/minio /data/logs \
+    && mkdir -p /data/pg /data/minio /data/logs /var/log/nginx \
     && chown -R postgres:postgres /data/pg
 
-EXPOSE 8888
+EXPOSE 8080 8888
 
 CMD ["/entrypoint.sh"]

@@ -64,6 +64,11 @@ mc alias set local http://127.0.0.1:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWOR
 mc mb --ignore-existing "local/$S3_BUCKET"
 mc mb --ignore-existing "local/daabase-backups"
 
+# ---- Reverse proxy (nginx): files.* -> MinIO :9000, resto -> motor :8888 ----
+nginx -g 'daemon off;' &
+NGINX_PID=$!
+echo "nginx en :8080 (pid $NGINX_PID)"
+
 # ---- Backups programados: pg_dump cada 6h + copia a bucket + retención 48h ----
 (
   sleep 90
@@ -106,5 +111,5 @@ cd /app
 
 echo "== 5/5 Arrancando servidor en :8888 =="
 
-trap 'kill $MINIO_PID 2>/dev/null || true; su postgres -c "$PGBIN/pg_ctl -D $PGDATA stop -m fast" || true' TERM INT
+trap 'kill $NGINX_PID 2>/dev/null || true; kill $MINIO_PID 2>/dev/null || true; su postgres -c "$PGBIN/pg_ctl -D $PGDATA stop -m fast" || true' TERM INT
 exec /app/start.sh
