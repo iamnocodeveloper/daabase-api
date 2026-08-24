@@ -1,4 +1,4 @@
-# KooDB API — todo-en-uno: Postgres 17 (wal_level=logical) + MinIO + motor InstantDB oficial
+# daabase API — todo-en-uno: Postgres 17 (wal_level=logical) + MinIO + motor InstantDB oficial + quota enforcement
 # Réplica fiel de self-hosting pero en un solo contenedor para PaaS sin compose propio.
 
 FROM ghcr.io/instantdb/server:latest AS instant
@@ -38,7 +38,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
  && rm -rf /var/lib/apt/lists/*
 
 COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh && mkdir -p /data/pg /data/minio && chown -R postgres:postgres /data/pg
+COPY quota/ /app/quota/
+RUN chmod +x /entrypoint.sh /app/quota/quota-check.sh \
+    && mkdir -p /data/pg /data/minio /data/logs \
+    && chown -R postgres:postgres /data/pg
 
 EXPOSE 8888
 

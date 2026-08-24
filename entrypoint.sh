@@ -81,6 +81,16 @@ mc mb --ignore-existing "local/daabase-backups"
   done
 ) &
 
+# ---- Quota enforcement: chequeo cada 5 min, toggle active/read-only ----
+(
+  sleep 300  # esperar 5 min a que el motor llene triples_size_aggregate
+  mkdir -p /data/logs
+  while true; do
+    /app/quota/quota-check.sh >> /data/logs/quota.log 2>&1
+    sleep 300
+  done
+) &
+
 echo "== 4/5 Motor InstantDB (bootstrap + migraciones automáticas) =="
 
 export DATABASE_URL="postgresql://postgres:${PG_PASSWORD}@127.0.0.1:5432/instant?sslmode=disable"

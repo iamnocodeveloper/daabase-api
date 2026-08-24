@@ -1,0 +1,125 @@
+#!/usr/bin/env bash
+# daabase quota enforcement
+# Reads per-app sizes from triples_size_aggregate (populated by engine every 5 min)
+# Toggles apps.status between 'active' and 'read-only'
+# Auto-restores when user deletes data and drops below limit
+#
+# Logs to stdout (captured by entrypoint → /data/logs/quota.log)
+
+set -euo pipefail
+
+PLAN_FILE="${PLAN_FILE:-/data/plans.yaml}"
+PGBIN=/usr/lib/postgresql/17/bin
+
+# ── Parse plans.yaml (no jq/python needed) ──────────────────────────
+
+get_limit() {
+  local plan="$1"
+  # Extract max_bytes for a given plan name
+  awk -v p="$plan" '
+    $0 ~ "^  " p ":" { found=1; next }
+    found && /max_bytes:/ { print $2; exit }
+    found && /^  [a-z]/ { exit }
+  ' "$PLAN_FILE"
+}
+
+get_warn_pct() {
+  local plan="$1"
+  awk -v p="$plan" '
+    $0 ~ "^  " p ":" { found=1; next }
+    found && /warn_pct:/ { print $2; exit }
+    found && /^  [a-z]/ { exit }
+  ' "$PLAN_FILE"
+}
+
+DEFAULT_PLAN=$(awk '/^default:/ { print $2 }' "$PLAN_FILE")
+
+# ── Human-readable size ─────────────────────────────────────────────
+
+human_bytes() {
+  local b=$1
+  if   [ "$b" -ge 1073741824 ]; then echo "$(echo "scale=1; $b/1073741824" | bc)GB"
+  elif [ "$b" -ge 1048576 ];    then echo "$(echo "scale=0; $b/1048576" | bc)MB"
+  elif [ "$b" -ge 1024 ];       then echo "$(echo "scale=0; $b/1024" | bc)KB"
+  else                                echo "${b}B"
+  fi
+}
+
+# ── Main check ──────────────────────────────────────────────────────
+
+ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+# Fetch all non-disabled apps with their sizes
+APP_DATA=$(su postgres -c "psql -tA -d instant" <<'SQL'
+  SELECT
+    a.id::text,
+    COALESCE(a.name, 'unnamed'),
+    COALESCE(a.subscription_type_id, 'free'),
+    a.status,
+    COALESCE(agg.total_bytes, 0)
+  FROM apps a
+  LEFT JOIN (
+    SELECT
+      app_id,
+      SUM(pg_size) + SUM(COALESCE(files_size, 0)) as total_bytes
+    FROM triples_size_aggregate ag
+    JOIN attrs at ON ag.attr_id = at.id
+    WHERE at.deletion_marked_at IS NULL
+    GROUP BY app_id
+  ) agg ON a.id = agg.app_id
+  WHERE a.status != 'disabled'
+    AND a.status IS NOT NULL;
+SQL
+)
+
+[ -z "$APP_DATA" ] && { echo "[$ts] [QUOTA-CHECK] no apps found"; exit 0; }
+
+while IFS='|' read -r app_id app_name plan current_status total_bytes; do
+  # Strip whitespace
+  app_id=$(echo "$app_id" | xargs)
+  app_name=$(echo "$app_name" | xargs)
+  plan=$(echo "$plan" | xargs)
+  current_status=$(echo "$current_status" | xargs)
+  total_bytes=${total_bytes:-0}
+  total_bytes=$(echo "$total_bytes" | xargs)
+
+  # Get limit for this plan (fallback to default)
+  max_bytes=$(get_limit "$plan")
+  [ -z "$max_bytes" ] && max_bytes=$(get_limit "$DEFAULT_PLAN")
+  [ -z "$max_bytes" ] && { echo "[$ts] [QUOTA-ERROR] no limit found for plan=$plan app=$app_id"; continue; }
+
+  warn_pct=$(get_warn_pct "$plan")
+  [ -z "$warn_pct" ] && warn_pct=80
+  warn_bytes=$(( max_bytes * warn_pct / 100 ))
+
+  total_mb=$(human_bytes "$total_bytes")
+  max_mb=$(human_bytes "$max_bytes")
+
+  if [ "$total_bytes" -gt "$max_bytes" ]; then
+    # OVER LIMIT
+    if [ "$current_status" = "active" ]; then
+      su postgres -c "psql -d instant -c \"UPDATE apps SET status = 'read-only' WHERE id = '$app_id'::uuid;\""
+      echo "[$ts] [QUOTA-EXCEEDED] app=$app_name($app_id) plan=$plan total=${total_mb}/${max_mb} -> read-only"
+    else
+      echo "[$ts] [QUOTA-CHECK] app=$app_name($app_id) plan=$plan total=${total_mb}/${max_mb} status=$current_status (already enforced)"
+    fi
+
+  elif [ "$total_bytes" -gt "$warn_bytes" ]; then
+    # WARNING ZONE (80-100%)
+    if [ "$current_status" = "active" ]; then
+      pct=$(( total_bytes * 100 / max_bytes ))
+      echo "[$ts] [QUOTA-WARN] app=$app_name($app_id) plan=$plan total=${total_mb}/${max_mb} (${pct}%)"
+    fi
+    # If already read-only but now under limit... check below
+
+  fi
+
+  # AUTO-RESTORE: if under limit and currently read-only, reactivate
+  if [ "$total_bytes" -le "$max_bytes" ] && [ "$current_status" = "read-only" ]; then
+    su postgres -c "psql -d instant -c \"UPDATE apps SET status = 'active' WHERE id = '$app_id'::uuid;\""
+    echo "[$ts] [QUOTA-RESTORED] app=$app_name($app_id) plan=$plan total=${total_mb}/${max_mb} -> active"
+  fi
+
+done <<< "$APP_DATA"
+
+echo "[$ts] [QUOTA-CHECK] done ($(echo "$APP_DATA" | wc -l | xargs) apps scanned)"

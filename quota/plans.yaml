@@ -1,0 +1,17 @@
+# daabase — quota limits per plan
+# Read by quota-check.sh every 5 minutes
+# Source of truth for all limit numbers
+
+plans:
+  free:
+    max_bytes: 209715200        # 200 MB
+    warn_pct: 80                # warning at 80%
+  pro:
+    max_bytes: 10737418240      # 10 GB
+    warn_pct: 80
+  startup:
+    max_bytes: 268435456000     # 250 GB
+    warn_pct: 80
+
+# Default plan for apps without a subscription
+default: free
