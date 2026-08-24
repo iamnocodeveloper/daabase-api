@@ -108,6 +108,9 @@ while IFS='|' read -r app_id app_name plan current_status total_bytes; do
   total_h=$(human_bytes "$total_bytes")
   max_h=$(human_bytes "$max_bytes")
 
+  # Always log each app so usage is visible in quota.log
+  echo "[$ts] [QUOTA-INFO] app=$app_name($app_id) plan=$plan status=$current_status total=${total_h}/${max_h}"
+
   if [ "$total_bytes" -gt "$max_bytes" ]; then
     # OVER LIMIT
     if [ "$current_status" = "active" ]; then
