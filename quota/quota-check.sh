@@ -62,12 +62,12 @@ APP_DATA=$(su postgres -c "psql -tA -d instant" <<'SQL'
   FROM apps a
   LEFT JOIN (
     SELECT
-      app_id,
-      SUM(pg_size) + SUM(COALESCE(files_size, 0)) as total_bytes
+      ag.app_id,
+      SUM(ag.pg_size) + SUM(COALESCE(ag.files_size, 0)) as total_bytes
     FROM triples_size_aggregate ag
     JOIN attrs at ON ag.attr_id = at.id
     WHERE at.deletion_marked_at IS NULL
-    GROUP BY app_id
+    GROUP BY ag.app_id
   ) agg ON a.id = agg.app_id
   WHERE COALESCE(a.status, 'active') != 'disabled';
 SQL
