@@ -46,6 +46,13 @@ su postgres -c "psql -qAt -c \"ALTER USER postgres PASSWORD '$PG_PASSWORD';\""
 su postgres -c "psql -qAt -c \"SELECT 1 FROM pg_database WHERE datname='instant'\"" | grep -q 1 || \
   su postgres -c "psql -c 'CREATE DATABASE instant;'"
 
+# ---- Reverse proxy (nginx): files.* -> MinIO :9000, resto -> motor :8888 ----
+# Se arranca ANTES que MinIO/motor para que el puerto 8080 escuche desde el
+# primer segundo (health check de la plataforma en el deploy no da falso down).
+nginx -g 'daemon off;' &
+NGINX_PID=$!
+echo "nginx en :8080 (pid $NGINX_PID)"
+
 echo "== 2/5 MinIO =="
 
 mkdir -p /data/minio
@@ -63,11 +70,6 @@ echo "== 3/5 Buckets =="
 mc alias set local http://127.0.0.1:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null
 mc mb --ignore-existing "local/$S3_BUCKET"
 mc mb --ignore-existing "local/daabase-backups"
-
-# ---- Reverse proxy (nginx): files.* -> MinIO :9000, resto -> motor :8888 ----
-nginx -g 'daemon off;' &
-NGINX_PID=$!
-echo "nginx en :8080 (pid $NGINX_PID)"
 
 # ---- Restore drill: una vez por ciclo de contenedor (B1 / gate D2b) ----
 /app/restore-drill.sh &
