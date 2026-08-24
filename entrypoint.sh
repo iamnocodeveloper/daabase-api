@@ -58,10 +58,28 @@ for i in $(seq 1 60); do
   sleep 1
 done
 
-echo "== 3/5 Bucket =="
+echo "== 3/5 Buckets =="
 
 mc alias set local http://127.0.0.1:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null
 mc mb --ignore-existing "local/$S3_BUCKET"
+mc mb --ignore-existing "local/daabase-backups"
+
+# ---- Backups programados: pg_dump cada 6h + copia a bucket + retención 48h ----
+(
+  sleep 90
+  while true; do
+    ts=$(date +%Y%m%d-%H%M%S)
+    mkdir -p /data/backups
+    if su postgres -c "$PGBIN/pg_dump -Fc instant" > "/data/backups/instant-$ts.dump" 2>/dev/null \
+       && [ -s "/data/backups/instant-$ts.dump" ]; then
+      mc cp -q "/data/backups/instant-$ts.dump" "local/daabase-backups/" >/dev/null 2>&1 || true
+      echo "backup ok: instant-$ts.dump"
+    fi
+    ls -1t /data/backups/*.dump 2>/dev/null | tail -n +9 | xargs -r rm -f
+    mc rm --force --older-than 48h "local/daabase-backups/" >/dev/null 2>&1 || true
+    sleep 21600
+  done
+) &
 
 echo "== 4/5 Motor InstantDB (bootstrap + migraciones automáticas) =="
 
