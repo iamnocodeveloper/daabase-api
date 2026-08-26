@@ -42,9 +42,22 @@ COPY entrypoint.sh /entrypoint.sh
 COPY quota/ /app/quota/
 COPY restore-drill.sh /app/restore-drill.sh
 COPY nginx.conf /etc/nginx/nginx.conf
+
 RUN chmod +x /entrypoint.sh /app/quota/quota-check.sh /app/restore-drill.sh \
-    && mkdir -p /data/pg /data/minio /data/logs /var/log/nginx \
-    && chown -R postgres:postgres /data/pg
+ && mkdir -p /data/pg /data/minio /data/logs /var/log/nginx \
+ && chown -R postgres:postgres /data/pg \
+ # Parche SSL: el JDK Corretto de la imagen upstream trae el cacerts vacío,
+ # lo que rompe el handshake TLS con SendGrid (InvalidAlgorithmParameterException:
+ # "trustAnchors parameter must be non-empty"). Reemplazamos el cacerts del JDK
+ # con el bundle de Debian (recién regenerado por update-ca-certificates arriba).
+ # Es la solución más confiable porque NO depende de que el motor respete JAVA_OPTS.
+ && JDK_CACERTS="$(find /usr/lib/jvm -type f -path '*/lib/security/cacerts' | head -n1)" \
+ && if [ -n "$JDK_CACERTS" ] && [ -f /etc/ssl/certs/java/cacerts ]; then \
+      cp /etc/ssl/certs/java/cacerts "$JDK_CACERTS" \
+      && echo "cacerts parcheado: $JDK_CACERTS"; \
+    else \
+      echo "WARN: no se pudo parchear cacerts (JDK_CACERTS='$JDK_CACERTS')"; \
+    fi
 
 EXPOSE 8080 8888
 

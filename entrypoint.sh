@@ -112,13 +112,6 @@ export AWS_REGION="${AWS_REGION:-us-east-1}"
 export S3_ENDPOINT="http://127.0.0.1:9000"
 export S3_PUBLIC_ENDPOINT="${S3_PUBLIC_ENDPOINT:-}"
 export JAVA_OPTS="${JAVA_OPTS:--Xmx1500m}"
-# JVM truststore: la imagen upstream del motor trae un cacerts vacío que rompe
-# el handshake TLS contra SendGrid (CertPathValidatorException: trustAnchors
-# parameter must be non-empty). Forzamos el truststore de Debian, regenerado
-# por `update-ca-certificates` en el Dockerfile.
-if [ -f /etc/ssl/certs/java/cacerts ]; then
-  JAVA_OPTS="$JAVA_OPTS -Djavax.net.ssl.trustStore=/etc/ssl/certs/java/cacerts -Djavax.net.ssl.trustStorePassword=changeit"
-fi
 # El motor lee PORT del entorno; la plataforma inyecta PORT=<puerto contenedor> (8080),
 # pero 8080 lo usa nginx. Forzamos el motor a 8888 (nginx enruta api.* -> 8888).
 export PORT=8888
