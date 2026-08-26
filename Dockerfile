@@ -1,5 +1,6 @@
 # daabase API — todo-en-uno: Postgres 17 (wal_level=logical) + MinIO + motor InstantDB oficial + quota enforcement
 # Réplica fiel de self-hosting pero en un solo contenedor para PaaS sin compose propio.
+# L-07 test 2026-08-26: commit de verificación de persistencia ante redeploy (marcador en entrypoint.sh).
 
 FROM ghcr.io/instantdb/server:latest AS instant
 

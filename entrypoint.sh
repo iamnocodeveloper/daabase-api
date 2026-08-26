@@ -26,6 +26,12 @@ mkdir -p /data/logs
   echo "/etc/ssl/certs/java/cacerts: $(stat -c %s /etc/ssl/certs/java/cacerts 2>/dev/null || echo 'no existe') bytes"
 } > /data/logs/ssl-diag.txt 2>&1
 
+# ---- Marcador de boot persistente (L-07: persistencia ante redeploy) ----
+# Se APPENDE en cada arranque a /data/logs/boots.log (volumen persistente).
+# Si tras un redeploy aparecen dos líneas (anterior + nueva), el volumen /data
+# sobrevivió al ciclo de contenedor. Verificación: `deviatik read <id> /data/logs/boots.log`.
+echo "BOOT $(date -u +%Y-%m-%dT%H:%M:%SZ) L07-test redeploy cycle" >> /data/logs/boots.log
+
 # ---- Reverse proxy (nginx): files.* -> MinIO :9000, resto -> motor :8888 ----
 # Primera instrucción: el puerto 8080 debe escuchar en <1s para que el health
 # check de la plataforma (que corre al arrancar el contenedor) no reporte "down".
