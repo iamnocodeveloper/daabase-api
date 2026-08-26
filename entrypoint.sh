@@ -11,6 +11,21 @@ set -euo pipefail
 PGDATA=/data/pg
 PGBIN=/usr/lib/postgresql/17/bin
 
+# ---- Diagnóstico SSL a /data/logs/ssl-diag.txt (legible vía CLI) ----
+mkdir -p /data/logs
+{
+  echo "== SSL DIAG $(date -u +%Y-%m-%dT%H:%M:%SZ) =="
+  echo "JAVA_TOOL_OPTIONS=$JAVA_TOOL_OPTIONS"
+  echo "JAVA_OPTS=$JAVA_OPTS"
+  echo "--- cacerts encontrados ---"
+  find / -name "cacerts" -type f 2>/dev/null | while read f; do
+    echo "$f ($(stat -c %s "$f" 2>/dev/null || echo '?') bytes)"
+  done
+  echo "--- bundle Debian ---"
+  echo "/etc/ssl/certs/ca-certificates.crt: $(stat -c %s /etc/ssl/certs/ca-certificates.crt 2>/dev/null || echo 'no existe') bytes"
+  echo "/etc/ssl/certs/java/cacerts: $(stat -c %s /etc/ssl/certs/java/cacerts 2>/dev/null || echo 'no existe') bytes"
+} > /data/logs/ssl-diag.txt 2>&1
+
 # ---- Reverse proxy (nginx): files.* -> MinIO :9000, resto -> motor :8888 ----
 # Primera instrucción: el puerto 8080 debe escuchar en <1s para que el health
 # check de la plataforma (que corre al arrancar el contenedor) no reporte "down".

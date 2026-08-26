@@ -3,10 +3,6 @@
 
 FROM ghcr.io/instantdb/server:latest AS instant
 
-# Imagen con un truststore cacerts completo, para reemplazar el cacerts vacío
-# que trae el JDK Corretto de la imagen upstream del motor.
-FROM eclipse-temurin:17-jre AS temurin
-
 FROM debian:bookworm-slim
 
 # JVM Corretto 26 desde la imagen oficial del servidor — detección automática del binario
@@ -30,28 +26,34 @@ COPY --from=instant /usr/local/bin/migrate /usr/local/bin/migrate
 COPY --from=minio/minio:latest /usr/bin/minio /usr/bin/minio
 COPY --from=minio/mc /usr/bin/mc /usr/bin/mc
 
-# Postgres 17 oficial (PGDG) con extensión lógica habilitada por config
+# Postgres 17 oficial (PGDG) con extensión lógica habilitada por config.
+# ca-certificates-java genera el truststore JKS (/etc/ssl/certs/java/cacerts)
+# que reemplaza al cacerts vacío del JDK Corretto de la imagen upstream.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      ca-certificates curl gnupg supervisor procps nginx \
+      ca-certificates ca-certificates-java curl gnupg supervisor procps nginx \
  && install -d /usr/share/postgresql-common/pgdg \
  && curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
       | gpg --dearmor -o /usr/share/postgresql-common/pgdg/apt.gpg \
  && echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.gpg] http://apt.postgresql.org/pub/repos/apt bookworm-pgdg main" \
       > /etc/apt/sources.list.d/pgdg.list \
  && apt-get update && apt-get install -y --no-install-recommends postgresql-17 postgresql-17-wal2json \
- && rm -rf /var/lib/apt/lists/*
+ && rm -rf /var/lib/apt/lists/* \
+ && update-ca-certificates
 
-# Parche SSL definitivo: el cacerts del JDK Corretto de la imagen upstream viene
-# vacío y rompe el handshake TLS con SendGrid ("trustAnchors parameter must be
-# non-empty"). Lo reemplazamos por el cacerts completo de eclipse-temurin, que
-# trae las CA raíz de Mozilla. La JVM lo carga por defecto sin flags.
-COPY --from=temurin /opt/java/openjdk/lib/security/cacerts /tmp/temurin-cacerts
-RUN JDK_CACERTS="$(find /usr/lib/jvm -type f -path '*/lib/security/cacerts' | head -n1)" \
- && test -n "$JDK_CACERTS" \
- && test -s /tmp/temurin-cacerts \
- && cp /tmp/temurin-cacerts "$JDK_CACERTS" \
- && rm -f /tmp/temurin-cacerts \
- && echo "cacerts del JDK parcheado desde Temurin: $JDK_CACERTS ($(stat -c %s "$JDK_CACERTS") bytes)"
+# Parche SSL: copia el truststore JKS de Debian (generado por ca-certificates-java)
+# sobre el cacerts del JDK Corretto. `|| true` evita romper el build si el
+# archivo de Debian no se generó; el diagnóstico en runtime confirmará el estado.
+RUN JDK_CACERTS="$(find /usr/lib/jvm -type f -path '*/lib/security/cacerts' | head -n1)"; \
+    if [ -n "$JDK_CACERTS" ] && [ -s /etc/ssl/certs/java/cacerts ]; then \
+      cp /etc/ssl/certs/java/cacerts "$JDK_CACERTS"; \
+      echo "cacerts parcheado: $JDK_CACERTS ($(stat -c %s "$JDK_CACERTS") bytes)"; \
+    else \
+      echo "WARN: no se pudo parchear cacerts (JDK='$JDK_CACERTS', debian=$(stat -c %s /etc/ssl/certs/java/cacerts 2>/dev/null))"; \
+    fi
+
+# Doble seguro: si el parche de arriba falla, la JVM lee el JKS de Debian por esta
+# propiedad (JAVA_TOOL_OPTIONS es leído automáticamente por HotSpot).
+ENV JAVA_TOOL_OPTIONS="-Djavax.net.ssl.trustStore=/etc/ssl/certs/java/cacerts -Djavax.net.ssl.trustStorePassword=changeit"
 
 COPY entrypoint.sh /entrypoint.sh
 COPY quota/ /app/quota/
