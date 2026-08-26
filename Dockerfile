@@ -35,7 +35,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
  && echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.gpg] http://apt.postgresql.org/pub/repos/apt bookworm-pgdg main" \
       > /etc/apt/sources.list.d/pgdg.list \
  && apt-get update && apt-get install -y --no-install-recommends postgresql-17 postgresql-17-wal2json \
- && rm -rf /var/lib/apt/lists/*
+ && rm -rf /var/lib/apt/lists/* \
+ && update-ca-certificates
 
 COPY entrypoint.sh /entrypoint.sh
 COPY quota/ /app/quota/
