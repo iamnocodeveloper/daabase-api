@@ -38,36 +38,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
  && rm -rf /var/lib/apt/lists/* \
  && update-ca-certificates
 
+# Parche SSL: el motor upstream ghcr.io/instantdb/server hace handshake TLS con
+# el cacerts del JDK Corretto (vacío). Como NO respeta JAVA_OPTS pero SÍ
+# respeta JAVA_TOOL_OPTIONS (estándar de HotSpot, se lee automáticamente al
+# arrancar la JVM), forzamos el truststore al bundle de Debian regenerado
+# por `update-ca-certificates` arriba.
+ENV JAVA_TOOL_OPTIONS="-Djavax.net.ssl.trustStore=/etc/ssl/certs/java/cacerts -Djavax.net.ssl.trustStorePassword=changeit"
+
 COPY entrypoint.sh /entrypoint.sh
 COPY quota/ /app/quota/
 COPY restore-drill.sh /app/restore-drill.sh
 COPY nginx.conf /etc/nginx/nginx.conf
-
-# Parche SSL definitivo: el motor upstream hace handshake TLS con el cacerts del
-# JDK Corretto (que está vacío) y NO respeta JAVA_OPTS ni truststore de sistema.
-# Solución: regeneramos el cacerts del JDK importando los certs del bundle de
-# Debian vía `keytool -importcacerts`. La JVM carga su propio cacerts por
-# defecto sin flags adicionales.
-RUN set -eux; \
-    JDK_CACERTS="$(find /usr/lib/jvm -type f -path '*/lib/security/cacerts' | head -n1)"; \
-    test -n "$JDK_CACERTS"; \
-    echo "JDK cacerts path: $JDK_CACERTS"; \
-    # Exportar certs de Debian a un PEM temporal y reimportar al cacerts del JDK
-    ls /etc/ssl/certs/*.pem > /tmp/pem-list.txt; \
-    cat /etc/ssl/certs/ca-certificates.crt > /tmp/all-certs.pem; \
-    # keytool importa un único cert por invocación; creamos un script que los
-    # importa todos desde el bundle PEM dividido en bloques.
-    awk '/-----BEGIN CERTIFICATE-----/{n++;out="/tmp/cert-"n".pem"} {print > out}' /tmp/all-certs.pem; \
-    count=0; \
-    for c in /tmp/cert-*.pem; do \
-      keytool -importcert -noprompt -alias "ca-${count}" \
-              -file "$c" -keystore "$JDK_CACERTS" \
-              -storepass changeit 2>/dev/null || true; \
-      count=$((count+1)); \
-    done; \
-    rm -f /tmp/cert-*.pem /tmp/all-certs.pem /tmp/pem-list.txt; \
-    echo "Importados $count certificados al cacerts del JDK ($JDK_CACERTS)"; \
-    chmod +x /entrypoint.sh /app/quota/quota-check.sh /app/restore-drill.sh \
+RUN chmod +x /entrypoint.sh /app/quota/quota-check.sh /app/restore-drill.sh \
  && mkdir -p /data/pg /data/minio /data/logs /var/log/nginx \
  && chown -R postgres:postgres /data/pg
 
